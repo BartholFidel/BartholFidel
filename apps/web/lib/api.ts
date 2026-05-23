@@ -1,0 +1,144 @@
+import type {
+  ApiErrorResponse,
+  ApiSuccessResponse,
+  CreateEntityBody,
+  Entity,
+  Incident,
+  IncidentStatusAction,
+  IncidentTierCounts,
+  RawPayloadSummary,
+} from "@bartholfidel/shared";
+
+function apiBase(): string {
+  if (typeof window !== "undefined") {
+    return "";
+  }
+  const url = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+  return url;
+}
+
+async function parseJson<T>(response: Response): Promise<T> {
+  const data: unknown = await response.json();
+  return data as T;
+}
+
+function getErrorMessage(
+  body: ApiSuccessResponse<unknown> | ApiErrorResponse,
+  fallback: string,
+): string {
+  if (!body.success) {
+    return body.error;
+  }
+  return fallback;
+}
+
+export async function fetchEntities(filters?: {
+  source?: string;
+  type?: string;
+}): Promise<Entity[]> {
+  const params = new URLSearchParams();
+  if (filters?.source) {
+    params.set("source", filters.source);
+  }
+  if (filters?.type) {
+    params.set("type", filters.type);
+  }
+  const query = params.toString();
+  const path = `/api/entities${query ? `?${query}` : ""}`;
+  const response = await fetch(`${apiBase()}${path}`, { cache: "no-store" });
+  const body = await parseJson<ApiSuccessResponse<Entity[]> | ApiErrorResponse>(
+    response,
+  );
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to fetch entities"));
+  }
+  return body.data;
+}
+
+export async function createEntity(
+  payload: CreateEntityBody,
+): Promise<Entity> {
+  const response = await fetch(`${apiBase()}/api/entities`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await parseJson<ApiSuccessResponse<Entity> | ApiErrorResponse>(
+    response,
+  );
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to create entity"));
+  }
+  return body.data;
+}
+
+export async function deleteEntity(id: string): Promise<void> {
+  const response = await fetch(`${apiBase()}/api/entities/${id}`, {
+    method: "DELETE",
+  });
+  const body = await parseJson<ApiSuccessResponse<{ id: string }> | ApiErrorResponse>(
+    response,
+  );
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to delete entity"));
+  }
+}
+
+export async function fetchIncidents(): Promise<Incident[]> {
+  const response = await fetch(`${apiBase()}/api/incidents`, {
+    cache: "no-store",
+  });
+  const body = await parseJson<ApiSuccessResponse<Incident[]> | ApiErrorResponse>(
+    response,
+  );
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to fetch incidents"));
+  }
+  return body.data;
+}
+
+export async function fetchIncidentTierCounts(): Promise<IncidentTierCounts> {
+  const response = await fetch(`${apiBase()}/api/incidents/counts`, {
+    cache: "no-store",
+  });
+  const body = await parseJson<
+    ApiSuccessResponse<IncidentTierCounts> | ApiErrorResponse
+  >(response);
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to fetch incident counts"));
+  }
+  return body.data;
+}
+
+export async function fetchIncidentPayload(
+  incidentId: string,
+): Promise<RawPayloadSummary | null> {
+  const response = await fetch(`${apiBase()}/api/incidents/${incidentId}/payload`, {
+    cache: "no-store",
+  });
+  const body = await parseJson<
+    ApiSuccessResponse<RawPayloadSummary | null> | ApiErrorResponse
+  >(response);
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to fetch payload summary"));
+  }
+  return body.data;
+}
+
+export async function updateIncidentStatus(
+  incidentId: string,
+  action: IncidentStatusAction,
+): Promise<Incident> {
+  const response = await fetch(`${apiBase()}/api/incidents/${incidentId}/status`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  const body = await parseJson<ApiSuccessResponse<Incident> | ApiErrorResponse>(
+    response,
+  );
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to update incident"));
+  }
+  return body.data;
+}

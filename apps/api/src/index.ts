@@ -3,7 +3,14 @@ import express from "express";
 import { loadConfig } from "./config.js";
 import { connectPostgres, disconnectPostgres } from "./db/postgres.js";
 import { connectRedis, disconnectRedis } from "./db/redis.js";
+import {
+  startBaselineScheduler,
+  stopBaselineScheduler,
+} from "./queues/baseline.queue.js";
+import { startNpmCollectorScheduler, stopNpmCollectorScheduler } from "./queues/npm.queue.js";
+import { entitiesRouter } from "./routes/entities.js";
 import { healthRouter } from "./routes/health.js";
+import { incidentsRouter } from "./routes/incidents.js";
 
 async function bootstrap(): Promise<void> {
   const config = loadConfig();
@@ -15,11 +22,19 @@ async function bootstrap(): Promise<void> {
   await connectRedis(config.redisUrl);
   console.log("[api] Redis connected");
 
+  await startNpmCollectorScheduler(config.redisUrl);
+  console.log("[api] npm collector scheduler started");
+
+  await startBaselineScheduler(config.redisUrl);
+  console.log("[api] baseline scheduler started");
+
   const app = express();
   app.use(cors());
   app.use(express.json());
 
   app.use("/api", healthRouter);
+  app.use("/api", entitiesRouter);
+  app.use("/api", incidentsRouter);
 
   const server = app.listen(config.apiPort, config.apiHost, () => {
     console.log(
@@ -30,6 +45,8 @@ async function bootstrap(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`[api] received ${signal}, shutting down`);
     server.close();
+    await stopBaselineScheduler();
+    await stopNpmCollectorScheduler();
     await disconnectRedis();
     await disconnectPostgres();
     process.exit(0);

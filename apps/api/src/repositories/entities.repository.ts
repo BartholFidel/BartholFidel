@@ -1,0 +1,174 @@
+import type { CreateEntityBody, Entity, EntityMetric } from "@bartholfidel/shared";
+import type { PoolClient, QueryResult } from "pg";
+import { getPostgresPool } from "../db/postgres.js";
+
+interface EntityRow {
+  id: string;
+  name: string;
+  type: string;
+  source: string;
+  chain_id: number | null;
+  address: string | null;
+  config: Record<string, unknown>;
+  risk_tier: string;
+  historically_compromised: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface MetricRow {
+  id: string;
+  entity_id: string;
+  metric: string;
+  value: string;
+  timestamp: Date;
+}
+
+function mapEntity(row: EntityRow): Entity {
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    source: row.source as Entity["source"],
+    chain_id: row.chain_id,
+    address: row.address,
+    config: row.config ?? {},
+    risk_tier: row.risk_tier,
+    historically_compromised: row.historically_compromised,
+    created_at: row.created_at.toISOString(),
+    updated_at: row.updated_at.toISOString(),
+  };
+}
+
+function mapMetric(row: MetricRow): EntityMetric {
+  return {
+    id: row.id,
+    entity_id: row.entity_id,
+    metric: row.metric,
+    value: Number(row.value),
+    timestamp: row.timestamp.toISOString(),
+  };
+}
+
+export interface EntityFilters {
+  source?: string;
+  type?: string;
+}
+
+export async function createEntity(body: CreateEntityBody): Promise<Entity> {
+  const pool = getPostgresPool();
+  const result = await pool.query<EntityRow>(
+    `INSERT INTO entities (name, type, source, config)
+     VALUES ($1, $2, $3, $4::jsonb)
+     RETURNING *`,
+    [body.name, body.type, body.source, JSON.stringify(body.config ?? {})],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Failed to create entity");
+  }
+  return mapEntity(row);
+}
+
+export async function listEntities(filters: EntityFilters): Promise<Entity[]> {
+  const pool = getPostgresPool();
+  const conditions: string[] = [];
+  const params: string[] = [];
+
+  if (filters.source) {
+    params.push(filters.source);
+    conditions.push(`source = $${params.length}`);
+  }
+  if (filters.type) {
+    params.push(filters.type);
+    conditions.push(`type = $${params.length}`);
+  }
+
+  const where =
+    conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const result = await pool.query<EntityRow>(
+    `SELECT * FROM entities ${where} ORDER BY created_at DESC`,
+    params,
+  );
+  return result.rows.map(mapEntity);
+}
+
+export async function getEntityById(id: string): Promise<Entity | null> {
+  const pool = getPostgresPool();
+  const result = await pool.query<EntityRow>(
+    `SELECT * FROM entities WHERE id = $1`,
+    [id],
+  );
+  const row = result.rows[0];
+  return row ? mapEntity(row) : null;
+}
+
+export async function countEntities(): Promise<number> {
+  const pool = getPostgresPool();
+  const result = await pool.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM entities`,
+  );
+  const row = result.rows[0];
+  return row ? Number.parseInt(row.count, 10) : 0;
+}
+
+/** Last 10 observations per metric name for an entity */
+export async function getEntityMetricsGrouped(
+  entityId: string,
+): Promise<Record<string, EntityMetric[]>> {
+  const pool = getPostgresPool();
+  const result = await pool.query<MetricRow>(
+    `SELECT id, entity_id, metric, value, timestamp
+     FROM (
+       SELECT *,
+         ROW_NUMBER() OVER (PARTITION BY metric ORDER BY timestamp DESC) AS rn
+       FROM entity_metrics_history
+       WHERE entity_id = $1
+     ) ranked
+     WHERE rn <= 10
+     ORDER BY metric, timestamp DESC`,
+    [entityId],
+  );
+
+  const grouped: Record<string, EntityMetric[]> = {};
+  for (const row of result.rows) {
+    const metric = mapMetric(row);
+    const list = grouped[metric.metric];
+    if (list) {
+      list.push(metric);
+    } else {
+      grouped[metric.metric] = [metric];
+    }
+  }
+  return grouped;
+}
+
+/** npm_package entities on the web2 watchlist */
+export async function listNpmWatchlistEntities(): Promise<Entity[]> {
+  return listEntities({ source: "web2", type: "npm_package" });
+}
+
+export async function deleteEntity(id: string): Promise<boolean> {
+  const pool = getPostgresPool();
+  const client: PoolClient = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `DELETE FROM entity_metrics_history WHERE entity_id = $1`,
+      [id],
+    );
+    await client.query(`DELETE FROM raw_events WHERE entity_id = $1`, [id]);
+    const result: QueryResult = await client.query(
+      `DELETE FROM entities WHERE id = $1`,
+      [id],
+    );
+    await client.query("COMMIT");
+    return (result.rowCount ?? 0) > 0;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
