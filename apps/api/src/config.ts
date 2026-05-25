@@ -13,6 +13,10 @@ export interface AppConfig {
   apiHost: string;
   databaseUrl: string;
   redisUrl: string;
+  githubToken: string | null;
+  githubWebhookSecret: string | null;
+  alchemyApiKey: string | null;
+  alchemyWsUrl: string | null;
 }
 
 function requireEnv(name: string): string {
@@ -35,5 +39,9 @@ export function loadConfig(): AppConfig {
     apiHost: process.env.API_HOST ?? "0.0.0.0",
     databaseUrl: requireEnv("DATABASE_URL"),
     redisUrl: requireEnv("REDIS_URL"),
+    githubToken: process.env.GITHUB_TOKEN ?? null,
+    githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET ?? null,
+    alchemyApiKey: process.env.ALCHEMY_API_KEY ?? null,
+    alchemyWsUrl: process.env.ALCHEMY_WS_URL ?? null,
   };
 }

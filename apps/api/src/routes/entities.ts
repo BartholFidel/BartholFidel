@@ -5,9 +5,13 @@ import type {
   Entity,
   EntityDetailResponse,
   EntitySource,
+  EoaWalletConfig,
+  GitHubRepoConfig,
 } from "@bartholfidel/shared";
 import { Router, type Request, type Response } from "express";
+import { enqueueGitHubPollNow } from "../queues/github.queue.js";
 import { enqueueNpmCollectorNow } from "../queues/npm.queue.js";
+import { parseGitHubRepoName } from "../repositories/github.repository.js";
 import {
   createEntity,
   deleteEntity,
@@ -20,6 +24,23 @@ export const entitiesRouter = Router();
 
 function isEntitySource(value: string): value is EntitySource {
   return value === "web2" || value === "web3";
+}
+
+function buildGitHubConfig(
+  name: string,
+  config: Record<string, unknown> | undefined,
+): GitHubRepoConfig | null {
+  const parsed = parseGitHubRepoName(name);
+  if (!parsed) {
+    return null;
+  }
+  const watch_actions =
+    typeof config?.watch_actions === "boolean" ? config.watch_actions : true;
+  return {
+    owner: parsed.owner,
+    repo: parsed.repo,
+    watch_actions,
+  };
 }
 
 function parseCreateBody(body: unknown): CreateEntityBody | null {
@@ -42,11 +63,20 @@ function parseCreateBody(body: unknown): CreateEntityBody | null {
       ? (record.config as Record<string, unknown>)
       : undefined;
 
+  const chain_id =
+    typeof record.chain_id === "number" ? record.chain_id : undefined;
+  const address =
+    typeof record.address === "string"
+      ? record.address.trim().toLowerCase()
+      : undefined;
+
   return {
     name: record.name.trim(),
     type: record.type.trim(),
     source: record.source,
     config,
+    chain_id,
+    address,
   };
 }
 
@@ -63,10 +93,53 @@ entitiesRouter.post(
       return;
     }
 
+    if (body.type === "github_repo") {
+      const ghConfig = buildGitHubConfig(body.name, body.config);
+      if (!ghConfig) {
+        res.status(400).json({
+          success: false,
+          error: 'GitHub repo name must be "owner/repo" (e.g. facebook/react).',
+        });
+        return;
+      }
+      body.config = ghConfig;
+    }
+
+    if (body.type === "eoa_wallet") {
+      if (!body.address) {
+        res.status(400).json({
+          success: false,
+          error: "EOA wallet requires address field (0x... format).",
+        });
+        return;
+      }
+      if (!/^0x[a-f0-9]{40}$/i.test(body.address)) {
+        res.status(400).json({
+          success: false,
+          error: "Invalid Ethereum address format.",
+        });
+        return;
+      }
+      if (!body.chain_id) {
+        res.status(400).json({
+          success: false,
+          error: "EOA wallet requires chain_id (e.g. 1 for mainnet).",
+        });
+        return;
+      }
+      body.config = {
+        address: body.address,
+        chain_id: body.chain_id,
+      } as EoaWalletConfig;
+    }
+
     try {
       const entity = await createEntity(body);
       if (body.type === "npm_package" && body.source === "web2") {
         await enqueueNpmCollectorNow();
+      }
+      if (body.type === "github_repo" && body.source === "web2") {
+        await enqueueGitHubPollNow();
       }
       res.status(201).json({ success: true, data: entity });
     } catch (error) {

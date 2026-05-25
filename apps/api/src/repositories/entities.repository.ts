@@ -58,10 +58,17 @@ export interface EntityFilters {
 export async function createEntity(body: CreateEntityBody): Promise<Entity> {
   const pool = getPostgresPool();
   const result = await pool.query<EntityRow>(
-    `INSERT INTO entities (name, type, source, config)
-     VALUES ($1, $2, $3, $4::jsonb)
+    `INSERT INTO entities (name, type, source, chain_id, address, config)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
      RETURNING *`,
-    [body.name, body.type, body.source, JSON.stringify(body.config ?? {})],
+    [
+      body.name,
+      body.type,
+      body.source,
+      body.chain_id ?? null,
+      body.address ?? null,
+      JSON.stringify(body.config ?? {}),
+    ],
   );
   const row = result.rows[0];
   if (!row) {

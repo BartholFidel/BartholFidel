@@ -7,15 +7,23 @@ import {
   startBaselineScheduler,
   stopBaselineScheduler,
 } from "./queues/baseline.queue.js";
+import {
+  startGitHubPollerScheduler,
+  stopGitHubPollerScheduler,
+} from "./queues/github.queue.js";
 import { startNpmCollectorScheduler, stopNpmCollectorScheduler } from "./queues/npm.queue.js";
+import {
+  startWeb3StreamScheduler,
+  stopWeb3StreamScheduler,
+} from "./queues/web3.queue.js";
 import { entitiesRouter } from "./routes/entities.js";
 import { healthRouter } from "./routes/health.js";
 import { incidentsRouter } from "./routes/incidents.js";
+import { githubWebhookRouter } from "./routes/webhooks.github.js";
 
 async function bootstrap(): Promise<void> {
   const config = loadConfig();
 
-  // Verify infrastructure connections before accepting traffic
   await connectPostgres(config.databaseUrl);
   console.log("[api] PostgreSQL connected");
 
@@ -28,7 +36,25 @@ async function bootstrap(): Promise<void> {
   await startBaselineScheduler(config.redisUrl);
   console.log("[api] baseline scheduler started");
 
+  await startGitHubPollerScheduler(config.redisUrl);
+  console.log("[api] GitHub poller scheduler started");
+
+  if (config.alchemyWsUrl) {
+    await startWeb3StreamScheduler(config.alchemyWsUrl, config.alchemyApiKey);
+    console.log("[api] Web3 transaction stream started");
+  } else {
+    console.warn("[api] ALCHEMY_WS_URL not configured, Web3 stream disabled");
+  }
+
   const app = express();
+
+  // GitHub webhooks require raw body for HMAC signature validation
+  app.use(
+    "/api/webhooks",
+    express.raw({ type: "application/json" }),
+    githubWebhookRouter,
+  );
+
   app.use(cors());
   app.use(express.json());
 
@@ -45,8 +71,10 @@ async function bootstrap(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`[api] received ${signal}, shutting down`);
     server.close();
+    await stopGitHubPollerScheduler();
     await stopBaselineScheduler();
     await stopNpmCollectorScheduler();
+    await stopWeb3StreamScheduler();
     await disconnectRedis();
     await disconnectPostgres();
     process.exit(0);

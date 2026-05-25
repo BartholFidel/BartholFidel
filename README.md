@@ -119,4 +119,4 @@ docker exec -it bartholfidel-postgres psql -U bartholfidel -d bartholfidel -c "\
 
 ## License
 
-Proprietary — BartholFidel. All rights reserved.
+Proprietary by BartholFidel. All rights reserved.

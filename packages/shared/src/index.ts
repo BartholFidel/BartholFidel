@@ -27,12 +27,31 @@ export interface Entity {
   updated_at: string;
 }
 
+/** GitHub repository entity configuration */
+export interface GitHubRepoConfig {
+  owner: string;
+  repo: string;
+  watch_actions: boolean;
+  github_last_collaborator_count?: number;
+  github_last_workflow_count?: number;
+  github_workflow_domains?: Record<string, string[]>;
+  github_last_workflow_modified?: number;
+}
+
+/** EOA wallet entity configuration */
+export interface EoaWalletConfig {
+  address: string;
+  chain_id: number;
+}
+
 /** POST /api/entities request body */
 export interface CreateEntityBody {
   name: string;
   type: string;
   source: EntitySource;
-  config?: Record<string, unknown>;
+  chain_id?: number;
+  address?: string;
+  config?: Record<string, unknown> | GitHubRepoConfig | EoaWalletConfig;
 }
 
 /** Single metric observation */
