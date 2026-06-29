@@ -1,12 +1,18 @@
 "use client";
 
-import type { CreateEntityBody, Entity, EntitySource } from "@bartholfidel/shared";
+import type {
+  CreateEntityBody,
+  Entity,
+  EntitySource,
+  UpdateEntityBody,
+} from "@bartholfidel/shared";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   createEntity,
   deleteEntity,
   fetchEntities,
+  updateEntity,
 } from "@/lib/api";
 
 const ENTITY_TYPES_WEB2 = [
@@ -20,6 +26,8 @@ const ENTITY_TYPES_WEB2 = [
 const ENTITY_TYPES_WEB3 = [
   { value: "eoa_wallet", label: "EOA Wallet" },
   { value: "smart_contract", label: "Smart Contract" },
+  { value: "token", label: "Token" },
+  { value: "liquidity_pool", label: "Liquidity Pool" },
   { value: "other", label: "Other" },
 ] as const;
 
@@ -62,6 +70,11 @@ export default function EntitiesPage(): JSX.Element {
   const [watchActions, setWatchActions] = useState(true);
   const [walletAddress, setWalletAddress] = useState("");
   const [chainId, setChainId] = useState<number>(1);
+  const [tokenSymbol, setTokenSymbol] = useState("");
+  const [chainlinkFeedAddress, setChainlinkFeedAddress] = useState("");
+  const [poolProtocol, setPoolProtocol] = useState("");
+  const [editingEntity, setEditingEntity] = useState<Entity | null>(null);
+  const [copiedAddressId, setCopiedAddressId] = useState<string | null>(null);
 
   const loadEntities = useCallback(async () => {
     setLoading(true);
@@ -79,6 +92,42 @@ export default function EntitiesPage(): JSX.Element {
   useEffect(() => {
     void loadEntities();
   }, [loadEntities]);
+
+  function resetForm(): void {
+    setEditingEntity(null);
+    setName("");
+    setType(source === "web2" ? "npm_package" : "eoa_wallet");
+    setWatchActions(true);
+    setWalletAddress("");
+    setChainId(1);
+    setTokenSymbol("");
+    setChainlinkFeedAddress("");
+    setPoolProtocol("");
+  }
+
+  function openEditForm(entity: Entity): void {
+    setEditingEntity(entity);
+    setShowForm(true);
+    setName(entity.name);
+    setSource(entity.source);
+    setType(entity.type);
+    setWalletAddress(entity.address ?? "");
+    setChainId(entity.chain_id ?? 1);
+    setWatchActions(
+      entity.config?.watch_actions === false ? false : true,
+    );
+    setTokenSymbol(
+      typeof entity.config?.symbol === "string" ? entity.config.symbol : "",
+    );
+    setChainlinkFeedAddress(
+      typeof entity.config?.chainlink_feed_address === "string"
+        ? entity.config.chainlink_feed_address
+        : "",
+    );
+    setPoolProtocol(
+      typeof entity.config?.protocol === "string" ? entity.config.protocol : "",
+    );
+  }
 
   async function handleSubmit(event: React.FormEvent): Promise<void> {
     event.preventDefault();
@@ -103,27 +152,59 @@ export default function EntitiesPage(): JSX.Element {
         };
       }
 
-      const body: CreateEntityBody = {
-        name: name.trim(),
-        type,
-        source,
-        config,
-        ...(type === "eoa_wallet" && {
-          address: walletAddress.trim().toLowerCase(),
-          chain_id: chainId,
-        }),
-      };
-      await createEntity(body);
-      setName("");
-      setType(source === "web2" ? "npm_package" : "eoa_wallet");
-      setSource(source);
-      setWatchActions(true);
-      setWalletAddress("");
-      setChainId(1);
+      if (type === "token") {
+        config = {
+          symbol: tokenSymbol.trim() || undefined,
+          chainlink_feed_address: chainlinkFeedAddress.trim().toLowerCase() || undefined,
+        };
+      }
+
+      if (type === "liquidity_pool") {
+        config = {
+          protocol: poolProtocol.trim() || undefined,
+        };
+      }
+
+      if (editingEntity) {
+        const updateBody: UpdateEntityBody = {
+          name: name.trim(),
+        };
+        if (
+          ["eoa_wallet", "smart_contract", "token", "liquidity_pool"].includes(type)
+        ) {
+          updateBody.address = walletAddress.trim().toLowerCase();
+          updateBody.chain_id = chainId;
+        }
+        if (type === "token" || type === "liquidity_pool") {
+          updateBody.config = config;
+        }
+
+        await updateEntity(editingEntity.id, updateBody);
+      } else {
+        const createBody: CreateEntityBody = {
+          name: name.trim(),
+          type,
+          source,
+          config,
+          ...(["eoa_wallet", "smart_contract", "token", "liquidity_pool"].includes(type) && {
+            address: walletAddress.trim().toLowerCase(),
+            chain_id: chainId,
+          }),
+        };
+        await createEntity(createBody);
+      }
+
+      resetForm();
       setShowForm(false);
       await loadEntities();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add entity");
+      setError(
+        err instanceof Error
+          ? err.message
+          : editingEntity
+          ? "Failed to update entity"
+          : "Failed to add entity",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -141,8 +222,23 @@ export default function EntitiesPage(): JSX.Element {
     }
   }
 
+  async function handleCopyAddress(address: string, entityId: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopiedAddressId(entityId);
+      setTimeout(() => setCopiedAddressId(null), 2000);
+    } catch (err) {
+      console.error("Failed to copy address:", err);
+    }
+  }
+
   const isGitHub = type === "github_repo";
   const isEoaWallet = type === "eoa_wallet";
+  const isWeb3Addressable =
+    source === "web3" &&
+    ["eoa_wallet", "smart_contract", "token", "liquidity_pool"].includes(type);
+  const isToken = type === "token";
+  const isLiquidityPool = type === "liquidity_pool";
   const entityTypes = source === "web2" ? ENTITY_TYPES_WEB2 : ENTITY_TYPES_WEB3;
   const filteredEntities = entities.filter((e) => e.source === activeTab);
 
@@ -167,10 +263,15 @@ export default function EntitiesPage(): JSX.Element {
           </div>
           <button
             type="button"
-            onClick={() => setShowForm((open) => !open)}
+            onClick={() => {
+              if (showForm && editingEntity) {
+                resetForm();
+              }
+              setShowForm((open) => !open);
+            }}
             className="rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-surface transition hover:bg-accent-muted"
           >
-            {showForm ? "Cancel" : "Add Entity"}
+            {showForm ? "Cancel" : editingEntity ? "Edit Entity" : "Add Entity"}
           </button>
         </header>
 
@@ -179,7 +280,9 @@ export default function EntitiesPage(): JSX.Element {
             onSubmit={(e) => void handleSubmit(e)}
             className="mb-8 rounded-xl border border-surface-border bg-surface-raised p-6"
           >
-            <h2 className="mb-4 text-lg font-medium text-white">Add Entity</h2>
+            <h2 className="mb-4 text-lg font-medium text-white">
+              {editingEntity ? "Edit Entity" : "Add Entity"}
+            </h2>
             <div className="grid gap-4 sm:grid-cols-3">
               <label className="block sm:col-span-2">
                 <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-400">
@@ -208,7 +311,8 @@ export default function EntitiesPage(): JSX.Element {
                 <select
                   value={type}
                   onChange={(e) => setType(e.target.value)}
-                  className="w-full rounded-lg border border-surface-border bg-surface px-3 py-2 text-white focus:border-accent focus:outline-none"
+                  disabled={Boolean(editingEntity)}
+                  className="w-full rounded-lg border border-surface-border bg-surface px-3 py-2 text-white focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {entityTypes.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -229,7 +333,8 @@ export default function EntitiesPage(): JSX.Element {
                       e.target.value === "web2" ? "npm_package" : "eoa_wallet",
                     );
                   }}
-                  className="w-full rounded-lg border border-surface-border bg-surface px-3 py-2 text-white focus:border-accent focus:outline-none"
+                  disabled={Boolean(editingEntity)}
+                  className="w-full rounded-lg border border-surface-border bg-surface px-3 py-2 text-white focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <option value="web2">web2</option>
                   <option value="web3">web3</option>
@@ -248,7 +353,7 @@ export default function EntitiesPage(): JSX.Element {
                   </span>
                 </label>
               )}
-              {isEoaWallet && (
+              {isWeb3Addressable && (
                 <>
                   <label className="block sm:col-span-2">
                     <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-400">
@@ -280,14 +385,76 @@ export default function EntitiesPage(): JSX.Element {
                   </label>
                 </>
               )}
+              {isToken && (
+                <>
+                  <label className="block sm:col-span-2">
+                    <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-400">
+                      Token Symbol
+                    </span>
+                    <input
+                      type="text"
+                      value={tokenSymbol}
+                      onChange={(e) => setTokenSymbol(e.target.value)}
+                      placeholder="e.g. USDC"
+                      className="w-full rounded-lg border border-surface-border bg-surface px-3 py-2 text-white placeholder:text-gray-600 focus:border-accent focus:outline-none"
+                    />
+                  </label>
+                  <label className="block sm:col-span-3">
+                    <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-400">
+                      Chainlink Feed Address
+                    </span>
+                    <input
+                      type="text"
+                      value={chainlinkFeedAddress}
+                      onChange={(e) => setChainlinkFeedAddress(e.target.value.toLowerCase())}
+                      placeholder="0x..."
+                      className="w-full rounded-lg border border-surface-border bg-surface px-3 py-2 font-mono text-white placeholder:text-gray-600 focus:border-accent focus:outline-none"
+                    />
+                  </label>
+                </>
+              )}
+              {isLiquidityPool && (
+                <label className="block sm:col-span-3">
+                  <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-400">
+                    Protocol or Pool Label
+                  </span>
+                  <input
+                    type="text"
+                    value={poolProtocol}
+                    onChange={(e) => setPoolProtocol(e.target.value)}
+                    placeholder="e.g. Uniswap v3"
+                    className="w-full rounded-lg border border-surface-border bg-surface px-3 py-2 text-white placeholder:text-gray-600 focus:border-accent focus:outline-none"
+                  />
+                </label>
+              )}
             </div>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="mt-4 rounded-lg bg-accent px-5 py-2 text-sm font-medium text-surface hover:bg-accent-muted disabled:opacity-50"
-            >
-              {submitting ? "Adding…" : "Add to Watchlist"}
-            </button>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="submit"
+                disabled={submitting}
+                className="rounded-lg bg-accent px-5 py-2 text-sm font-medium text-surface hover:bg-accent-muted disabled:opacity-50"
+              >
+                {submitting
+                  ? editingEntity
+                    ? "Saving…"
+                    : "Adding…"
+                  : editingEntity
+                  ? "Save Changes"
+                  : "Add to Watchlist"}
+              </button>
+              {editingEntity && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetForm();
+                    setShowForm(false);
+                  }}
+                  className="rounded-lg border border-surface-border bg-surface px-5 py-2 text-sm font-medium text-white hover:border-accent hover:text-accent"
+                >
+                  Cancel edit
+                </button>
+              )}
+            </div>
           </form>
         )}
 
@@ -348,21 +515,41 @@ export default function EntitiesPage(): JSX.Element {
                     key={entity.id}
                     className="border-b border-surface-border/60 hover:bg-surface/40"
                   >
-                    <td className="px-4 py-3 font-medium text-white">
-                      {entity.name}
+                    <td className="px-4 py-3 font-medium">
+                      <Link
+                        href={`/entities/${entity.id}`}
+                        className="text-white hover:text-accent"
+                      >
+                        {entity.name}
+                      </Link>
                     </td>
                     <td className="px-4 py-3 text-gray-300">{entity.type}</td>
                     {activeTab === "web3" && (
                       <>
-                        <td className="px-4 py-3 font-mono text-xs text-gray-400">
-                          {truncateAddress(entity.address)}
+                        <td className="px-4 py-3 font-mono text-xs">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (entity.address) {
+                                void handleCopyAddress(entity.address, entity.id);
+                              }
+                            }}
+                            title={entity.address || ""}
+                            className={`rounded px-2 py-1 transition ${
+                              copiedAddressId === entity.id
+                                ? "bg-emerald-500/20 text-emerald-400"
+                                : "text-gray-400 hover:text-accent hover:bg-accent/10 cursor-pointer"
+                            }`}
+                          >
+                            {copiedAddressId === entity.id ? "✓ Copied" : truncateAddress(entity.address)}
+                          </button>
                         </td>
                         <td className="px-4 py-3 text-gray-400">
-                          {entity.address && (
-                            <span className="text-xs">
-                              {Math.random() > 0.5 ? "Active" : "—"}
-                            </span>
-                          )}
+                          <span className="text-xs">
+                            {entity.last_active_at
+                              ? formatDate(entity.last_active_at)
+                              : "—"}
+                          </span>
                         </td>
                       </>
                     )}
@@ -378,7 +565,14 @@ export default function EntitiesPage(): JSX.Element {
                     <td className="px-4 py-3 text-gray-400">
                       {formatDate(entity.created_at)}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => openEditForm(entity)}
+                        className="text-xs text-gray-300 hover:text-white"
+                      >
+                        Edit
+                      </button>
                       <button
                         type="button"
                         onClick={() => void handleDelete(entity.id)}

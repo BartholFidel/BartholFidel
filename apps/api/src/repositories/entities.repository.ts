@@ -12,6 +12,7 @@ interface EntityRow {
   config: Record<string, unknown>;
   risk_tier: string;
   historically_compromised: boolean;
+  last_active_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -35,6 +36,7 @@ function mapEntity(row: EntityRow): Entity {
     config: row.config ?? {},
     risk_tier: row.risk_tier,
     historically_compromised: row.historically_compromised,
+    last_active_at: row.last_active_at ? row.last_active_at.toISOString() : null,
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };
@@ -154,6 +156,56 @@ export async function getEntityMetricsGrouped(
 /** npm_package entities on the web2 watchlist */
 export async function listNpmWatchlistEntities(): Promise<Entity[]> {
   return listEntities({ source: "web2", type: "npm_package" });
+}
+
+export async function updateEntity(
+  id: string,
+  updates: {
+    name?: string;
+    chain_id?: number | null;
+    address?: string | null;
+    config?: Record<string, unknown>;
+  },
+): Promise<Entity> {
+  const pool = getPostgresPool();
+  const fields: string[] = [];
+  const params: Array<string | number | null> = [];
+
+  if (updates.name !== undefined) {
+    params.push(updates.name);
+    fields.push(`name = $${params.length}`);
+  }
+  if (updates.chain_id !== undefined) {
+    params.push(updates.chain_id);
+    fields.push(`chain_id = $${params.length}`);
+  }
+  if (updates.address !== undefined) {
+    params.push(updates.address);
+    fields.push(`address = $${params.length}`);
+  }
+  if (updates.config !== undefined) {
+    params.push(JSON.stringify(updates.config));
+    fields.push(`config = $${params.length}::jsonb`);
+  }
+
+  if (fields.length === 0) {
+    return getEntityById(id) as Promise<Entity>;
+  }
+
+  params.push(id);
+  const result = await pool.query<EntityRow>(
+    `UPDATE entities
+     SET ${fields.join(", ")}, updated_at = now()
+     WHERE id = $${params.length}
+     RETURNING *`,
+    params,
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Failed to update entity");
+  }
+  return mapEntity(row);
 }
 
 export async function deleteEntity(id: string): Promise<boolean> {

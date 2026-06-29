@@ -62,6 +62,14 @@ async function bootstrap(): Promise<void> {
   app.use("/api", entitiesRouter);
   app.use("/api", incidentsRouter);
 
+  app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("[api] unhandled error:", err);
+    if (res.headersSent) {
+      return next(err);
+    }
+    res.status(500).json({ success: false, error: "Internal server error" });
+  });
+
   const server = app.listen(config.apiPort, config.apiHost, () => {
     console.log(
       `[api] BartholFidel API listening on http://${config.apiHost}:${config.apiPort}`,

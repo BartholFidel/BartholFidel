@@ -23,6 +23,7 @@ export interface Entity {
   config: Record<string, unknown>;
   risk_tier: string;
   historically_compromised: boolean;
+  last_active_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -44,6 +45,24 @@ export interface EoaWalletConfig {
   chain_id: number;
 }
 
+export interface SmartContractConfig {
+  address: string;
+  chain_id: number;
+}
+
+export interface TokenConfig {
+  address: string;
+  chain_id: number;
+  symbol?: string;
+  chainlink_feed_address?: string;
+}
+
+export interface LiquidityPoolConfig {
+  address: string;
+  chain_id: number;
+  protocol?: string;
+}
+
 /** POST /api/entities request body */
 export interface CreateEntityBody {
   name: string;
@@ -51,7 +70,21 @@ export interface CreateEntityBody {
   source: EntitySource;
   chain_id?: number;
   address?: string;
-  config?: Record<string, unknown> | GitHubRepoConfig | EoaWalletConfig;
+  config?:
+    | Record<string, unknown>
+    | GitHubRepoConfig
+    | EoaWalletConfig
+    | SmartContractConfig
+    | TokenConfig
+    | LiquidityPoolConfig;
+}
+
+/** PATCH /api/entities/:id request body */
+export interface UpdateEntityBody {
+  name?: string;
+  chain_id?: number;
+  address?: string | null;
+  config?: Record<string, unknown>;
 }
 
 /** Single metric observation */

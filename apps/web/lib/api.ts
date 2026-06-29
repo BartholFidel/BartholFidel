@@ -3,10 +3,12 @@ import type {
   ApiSuccessResponse,
   CreateEntityBody,
   Entity,
+  EntityDetailResponse,
   Incident,
   IncidentStatusAction,
   IncidentTierCounts,
   RawPayloadSummary,
+  UpdateEntityBody,
 } from "@bartholfidel/shared";
 
 function apiBase(): string {
@@ -18,8 +20,19 @@ function apiBase(): string {
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
-  const data: unknown = await response.json();
-  return data as T;
+  const text = await response.text();
+  if (!text) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    return {
+      success: false,
+      error: text,
+    } as unknown as T;
+  }
 }
 
 function getErrorMessage(
@@ -82,6 +95,39 @@ export async function deleteEntity(id: string): Promise<void> {
   if (!response.ok || !body.success) {
     throw new Error(getErrorMessage(body, "Failed to delete entity"));
   }
+}
+
+export async function updateEntity(
+  id: string,
+  payload: UpdateEntityBody,
+): Promise<Entity> {
+  const response = await fetch(`${apiBase()}/api/entities/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await parseJson<ApiSuccessResponse<Entity> | ApiErrorResponse>(
+    response,
+  );
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to update entity"));
+  }
+  return body.data;
+}
+
+export async function fetchEntityDetail(
+  id: string,
+): Promise<EntityDetailResponse> {
+  const response = await fetch(`${apiBase()}/api/entities/${id}`, {
+    cache: "no-store",
+  });
+  const body = await parseJson<
+    ApiSuccessResponse<EntityDetailResponse> | ApiErrorResponse
+  >(response);
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to fetch entity detail"));
+  }
+  return body.data;
 }
 
 export async function fetchIncidents(): Promise<Incident[]> {

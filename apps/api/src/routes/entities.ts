@@ -7,10 +7,12 @@ import type {
   EntitySource,
   EoaWalletConfig,
   GitHubRepoConfig,
+  UpdateEntityBody,
 } from "@bartholfidel/shared";
 import { Router, type Request, type Response } from "express";
 import { enqueueGitHubPollNow } from "../queues/github.queue.js";
 import { enqueueNpmCollectorNow } from "../queues/npm.queue.js";
+import { handleNewWeb3Wallet } from "../queues/web3.queue.js";
 import { parseGitHubRepoName } from "../repositories/github.repository.js";
 import {
   createEntity,
@@ -18,6 +20,7 @@ import {
   getEntityById,
   getEntityMetricsGrouped,
   listEntities,
+  updateEntity,
 } from "../repositories/entities.repository.js";
 
 export const entitiesRouter = Router();
@@ -28,14 +31,20 @@ function isEntitySource(value: string): value is EntitySource {
 
 function buildGitHubConfig(
   name: string,
-  config: Record<string, unknown> | undefined,
+  config: unknown,
 ): GitHubRepoConfig | null {
   const parsed = parseGitHubRepoName(name);
   if (!parsed) {
     return null;
   }
+  const configRecord =
+    typeof config === "object" && config !== null
+      ? (config as Record<string, unknown>)
+      : undefined;
   const watch_actions =
-    typeof config?.watch_actions === "boolean" ? config.watch_actions : true;
+    typeof configRecord?.watch_actions === "boolean"
+      ? configRecord.watch_actions
+      : true;
   return {
     owner: parsed.owner,
     repo: parsed.repo,
@@ -80,6 +89,52 @@ function parseCreateBody(body: unknown): CreateEntityBody | null {
   };
 }
 
+function parseUpdateBody(body: unknown): UpdateEntityBody | null {
+  if (typeof body !== "object" || body === null) {
+    return null;
+  }
+  const record = body as Record<string, unknown>;
+
+  const updates: UpdateEntityBody = {};
+
+  if (record.name !== undefined) {
+    if (typeof record.name !== "string") {
+      return null;
+    }
+    updates.name = record.name.trim();
+  }
+
+  if (record.chain_id !== undefined) {
+    if (typeof record.chain_id !== "number") {
+      return null;
+    }
+    updates.chain_id = record.chain_id;
+  }
+
+  if (record.address !== undefined) {
+    if (record.address !== null && typeof record.address !== "string") {
+      return null;
+    }
+    updates.address =
+      typeof record.address === "string"
+        ? record.address.trim().toLowerCase()
+        : null;
+  }
+
+  if (record.config !== undefined) {
+    if (typeof record.config !== "object" || record.config === null) {
+      return null;
+    }
+    updates.config = record.config as Record<string, unknown>;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return null;
+  }
+
+  return updates;
+}
+
 /** POST /api/entities — add entity to watchlist */
 entitiesRouter.post(
   "/entities",
@@ -105,11 +160,17 @@ entitiesRouter.post(
       body.config = ghConfig;
     }
 
-    if (body.type === "eoa_wallet") {
+    const isWeb3ContractType =
+      body.type === "eoa_wallet" ||
+      body.type === "smart_contract" ||
+      body.type === "token" ||
+      body.type === "liquidity_pool";
+
+    if (isWeb3ContractType) {
       if (!body.address) {
         res.status(400).json({
           success: false,
-          error: "EOA wallet requires address field (0x... format).",
+          error: "Web3 watchlist entries require an address field (0x... format).",
         });
         return;
       }
@@ -123,14 +184,38 @@ entitiesRouter.post(
       if (!body.chain_id) {
         res.status(400).json({
           success: false,
-          error: "EOA wallet requires chain_id (e.g. 1 for mainnet).",
+          error: "Web3 entities require chain_id (e.g. 1 for mainnet).",
         });
         return;
       }
-      body.config = {
+
+      const configBase = {
         address: body.address,
         chain_id: body.chain_id,
-      } as EoaWalletConfig;
+      };
+
+      const configRecord =
+        typeof body.config === "object" && body.config !== null
+          ? (body.config as Record<string, unknown>)
+          : {};
+
+      if (body.type === "token") {
+        const symbol =
+          typeof configRecord.symbol === "string"
+            ? configRecord.symbol.trim()
+            : undefined;
+        const chainlinkFeed =
+          typeof configRecord.chainlink_feed_address === "string"
+            ? configRecord.chainlink_feed_address.trim().toLowerCase()
+            : undefined;
+        body.config = {
+          ...configBase,
+          ...(symbol ? { symbol } : {}),
+          ...(chainlinkFeed ? { chainlink_feed_address: chainlinkFeed } : {}),
+        };
+      } else {
+        body.config = configBase;
+      }
     }
 
     try {
@@ -140,6 +225,9 @@ entitiesRouter.post(
       }
       if (body.type === "github_repo" && body.source === "web2") {
         await enqueueGitHubPollNow();
+      }
+      if (body.type === "eoa_wallet" && body.source === "web3") {
+        handleNewWeb3Wallet(entity);
       }
       res.status(201).json({ success: true, data: entity });
     } catch (error) {
@@ -186,6 +274,67 @@ entitiesRouter.get(
     } catch (error) {
       console.error("[entities] get failed:", error);
       res.status(500).json({ success: false, error: "Failed to fetch entity" });
+    }
+  },
+);
+
+/** PATCH /api/entities/:id — update entity fields */
+entitiesRouter.patch(
+  "/entities/:id",
+  async (
+    req: Request<{ id: string }>,
+    res: Response<ApiSuccessResponse<Entity> | ApiErrorResponse>,
+  ) => {
+    const body = parseUpdateBody(req.body);
+    if (!body) {
+      res.status(400).json({
+        success: false,
+        error: "Invalid update payload. Provide at least one of name, address, chain_id, or config.",
+      });
+      return;
+    }
+
+    if (body.address !== undefined && body.address !== null) {
+      if (!/^0x[a-f0-9]{40}$/i.test(body.address)) {
+        res.status(400).json({
+          success: false,
+          error: "Invalid Ethereum address format.",
+        });
+        return;
+      }
+    }
+
+    try {
+      const existing = await getEntityById(req.params.id);
+      if (!existing) {
+        res.status(404).json({ success: false, error: "Entity not found" });
+        return;
+      }
+
+      const updates: UpdateEntityBody = { ...body };
+      if (
+        existing.source === "web3" &&
+        ["eoa_wallet", "smart_contract", "token", "liquidity_pool"].includes(
+          existing.type,
+        )
+      ) {
+        const mergedConfig = {
+          ...(typeof existing.config === "object" && existing.config !== null
+            ? existing.config
+            : {}),
+          ...(body.address !== undefined && body.address !== null
+            ? { address: body.address }
+            : {}),
+          ...(body.chain_id !== undefined ? { chain_id: body.chain_id } : {}),
+        } as Record<string, unknown>;
+        updates.config = mergedConfig;
+      }
+
+      const entity = await updateEntity(req.params.id, updates);
+      res.json({ success: true, data: entity });
+    } catch (error) {
+      console.error("[entities] update failed:", error);
+      res.status(500).json({ success: false, error: "Failed to update entity" });
     }
   },
 );

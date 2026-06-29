@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run build -w @bartholfidel/shared && concurrently -n api,web -c blue,green \"npm run dev -w @bartholfidel/api\" \"npm run dev -w @bartholfidel/web\"",
+    "dev": "node ./scripts/cleanup-dev-ports.js && npm run build -w @bartholfidel/shared && concurrently -n api,web -c blue,green \"npm run dev -w @bartholfidel/api\" \"npm run dev -w @bartholfidel/web\"",
     "build": "npm run build -w @bartholfidel/shared && npm run build -w @bartholfidel/api && npm run build -w @bartholfidel/web",
     "migrate": "npm run migrate -w @bartholfidel/api"
   },

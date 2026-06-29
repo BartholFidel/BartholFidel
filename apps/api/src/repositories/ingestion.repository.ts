@@ -38,7 +38,18 @@ export async function insertRawEventIfNew(params: {
     ],
   );
 
-  return (result.rowCount ?? 0) > 0;
+  const inserted = (result.rowCount ?? 0) > 0;
+  if (!inserted) {
+    console.log(
+      `[ingestion.repo] insertRawEventIfNew skipped (payload_hash exists) entity=${params.entityId} eventType=${params.eventType} payloadHash=${payloadHash}`,
+    );
+  } else {
+    console.log(
+      `[ingestion.repo] insertRawEventIfNew inserted entity=${params.entityId} eventType=${params.eventType} payloadHash=${payloadHash}`,
+    );
+  }
+
+  return inserted;
 }
 
 /**
@@ -83,6 +94,7 @@ export async function insertEntityMetricsBatch(
   const client: PoolClient = await pool.connect();
   try {
     await client.query("BEGIN");
+    console.log(`[ingestion.repo] inserting ${metrics.length} metric rows`);
     for (const row of metrics) {
       await client.query(
         `INSERT INTO entity_metrics_history (entity_id, metric, value, timestamp)
@@ -93,6 +105,7 @@ export async function insertEntityMetricsBatch(
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
+    console.error("[ingestion.repo] insertEntityMetricsBatch failed:", error);
     throw error;
   } finally {
     client.release();

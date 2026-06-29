@@ -56,6 +56,11 @@ export async function createIncident(params: {
        triggered_metrics, surface, attack_pattern
      )
      VALUES ($1, $2, $3, 'open', $4::jsonb, $5, $6)
+     ON CONFLICT (entity_id, attack_pattern) DO UPDATE SET
+       composite_score = EXCLUDED.composite_score,
+       tier = EXCLUDED.tier,
+       triggered_metrics = EXCLUDED.triggered_metrics,
+       surface = EXCLUDED.surface
      RETURNING
        id, entity_id, NULL::text AS entity_name,
        composite_score, tier, status, triggered_metrics,

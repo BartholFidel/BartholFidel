@@ -27,6 +27,7 @@ function mapEntity(row: EntityRow): Entity {
     config: row.config ?? {},
     risk_tier: row.risk_tier,
     historically_compromised: row.historically_compromised,
+    last_active_at: row.last_active_at ? row.last_active_at.toISOString() : null,
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };
@@ -35,14 +36,31 @@ function mapEntity(row: EntityRow): Entity {
 /**
  * List all EOA wallet entities on the web3 watchlist.
  */
-export async function listEoaWalletEntities(): Promise<Entity[]> {
+async function listWeb3EntitiesByType(types: string[]): Promise<Entity[]> {
   const pool = getPostgresPool();
   const result = await pool.query<EntityRow>(
     `SELECT * FROM entities 
-     WHERE source = 'web3' AND type = 'eoa_wallet' 
+     WHERE source = 'web3' AND type = ANY($1::text[])
      ORDER BY created_at DESC`,
+    [types],
   );
   return result.rows.map(mapEntity);
+}
+
+export async function listEoaWalletEntities(): Promise<Entity[]> {
+  return listWeb3EntitiesByType(["eoa_wallet"]);
+}
+
+export async function listContractWatchEntities(): Promise<Entity[]> {
+  return listWeb3EntitiesByType(["smart_contract", "token", "liquidity_pool"]);
+}
+
+export async function listTokenEntities(): Promise<Entity[]> {
+  return listWeb3EntitiesByType(["token"]);
+}
+
+export async function listLiquidityPoolEntities(): Promise<Entity[]> {
+  return listWeb3EntitiesByType(["liquidity_pool"]);
 }
 
 /**
