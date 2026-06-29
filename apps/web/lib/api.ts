@@ -2,12 +2,16 @@ import type {
   ApiErrorResponse,
   ApiSuccessResponse,
   CreateEntityBody,
+  CreateRelationshipBody,
   Entity,
   EntityDetailResponse,
+  EntityGraph,
+  EntityRelationship,
   Incident,
   IncidentStatusAction,
   IncidentTierCounts,
   RawPayloadSummary,
+  ShortestPathResponse,
   UpdateEntityBody,
 } from "@bartholfidel/shared";
 
@@ -187,4 +191,61 @@ export async function updateIncidentStatus(
     throw new Error(getErrorMessage(body, "Failed to update incident"));
   }
   return body.data;
+}
+
+export async function fetchGraph(): Promise<EntityGraph> {
+  const response = await fetch(`${apiBase()}/api/graph`, { cache: "no-store" });
+  const body = await parseJson<
+    ApiSuccessResponse<EntityGraph> | ApiErrorResponse
+  >(response);
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to fetch graph"));
+  }
+  return body.data;
+}
+
+export async function fetchShortestPath(
+  from: string,
+  to: string,
+): Promise<ShortestPathResponse> {
+  const params = new URLSearchParams({ from, to });
+  const response = await fetch(`${apiBase()}/api/graph/path?${params.toString()}`, {
+    cache: "no-store",
+  });
+  const body = await parseJson<
+    ApiSuccessResponse<ShortestPathResponse> | ApiErrorResponse
+  >(response);
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to compute shortest path"));
+  }
+  return body.data;
+}
+
+export async function createRelationship(
+  payload: CreateRelationshipBody,
+): Promise<EntityRelationship> {
+  const response = await fetch(`${apiBase()}/api/graph/relationships`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await parseJson<
+    ApiSuccessResponse<EntityRelationship> | ApiErrorResponse
+  >(response);
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to create relationship"));
+  }
+  return body.data;
+}
+
+export async function deleteRelationship(id: string): Promise<void> {
+  const response = await fetch(`${apiBase()}/api/graph/relationships/${id}`, {
+    method: "DELETE",
+  });
+  const body = await parseJson<
+    ApiSuccessResponse<{ id: string }> | ApiErrorResponse
+  >(response);
+  if (!response.ok || !body.success) {
+    throw new Error(getErrorMessage(body, "Failed to delete relationship"));
+  }
 }

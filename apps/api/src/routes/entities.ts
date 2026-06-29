@@ -22,6 +22,11 @@ import {
   listEntities,
   updateEntity,
 } from "../repositories/entities.repository.js";
+import {
+  removeEntityNode,
+  syncEntityNode,
+} from "../repositories/relationships.repository.js";
+import { inferRelationshipsForEntity } from "../services/relationship.inference.js";
 
 export const entitiesRouter = Router();
 
@@ -229,6 +234,12 @@ entitiesRouter.post(
       if (body.type === "eoa_wallet" && body.source === "web3") {
         handleNewWeb3Wallet(entity);
       }
+      // Project the new node into Neo4j before inferring edges, then derive
+      // auto-relationships (DEPENDS_ON / DEPLOYED) in the background.
+      await syncEntityNode(entity);
+      void inferRelationshipsForEntity(entity).catch((error: unknown) => {
+        console.error("[entities] relationship inference failed:", error);
+      });
       res.status(201).json({ success: true, data: entity });
     } catch (error) {
       console.error("[entities] create failed:", error);
@@ -352,6 +363,9 @@ entitiesRouter.delete(
         res.status(404).json({ success: false, error: "Entity not found" });
         return;
       }
+      void removeEntityNode(req.params.id).catch((error: unknown) => {
+        console.error("[entities] neo4j node removal failed:", error);
+      });
       res.json({ success: true, data: { id: req.params.id } });
     } catch (error) {
       console.error("[entities] delete failed:", error);

@@ -131,6 +131,37 @@ async function collectPackageForEntity(
   };
 }
 
+/**
+ * Fetches a package's direct runtime dependencies (latest published version).
+ * Used by relationship inference to build DEPENDS_ON edges.
+ */
+export async function fetchDirectDependencies(
+  packageName: string,
+): Promise<string[]> {
+  const packument = await fetchPackument(packageName);
+  if (!packument) {
+    return [];
+  }
+  const latest = latestVersionDoc(packument);
+  return latest ? Object.keys(latest.dependencies ?? {}) : [];
+}
+
+/** Picks the most recently published version document in a packument. */
+function latestVersionDoc(packument: NpmPackument): NpmVersionDoc | null {
+  let newest: { doc: NpmVersionDoc; at: number } | null = null;
+  for (const [version, doc] of Object.entries(packument.versions)) {
+    const timeRaw = packument.time?.[version];
+    const at = timeRaw ? new Date(timeRaw).getTime() : Number.NaN;
+    if (Number.isNaN(at)) {
+      continue;
+    }
+    if (!newest || at > newest.at) {
+      newest = { doc, at };
+    }
+  }
+  return newest?.doc ?? null;
+}
+
 async function fetchPackument(packageName: string): Promise<NpmPackument | null> {
   const encoded = encodeURIComponent(packageName);
   const url = `${NPM_PACKAGE_URL}/${encoded}`;

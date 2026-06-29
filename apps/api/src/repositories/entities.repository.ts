@@ -113,6 +113,51 @@ export async function getEntityById(id: string): Promise<Entity | null> {
   return row ? mapEntity(row) : null;
 }
 
+/** Finds a single entity matching name + type + source, if any. */
+export async function findEntityByName(
+  name: string,
+  type: string,
+  source: string,
+): Promise<Entity | null> {
+  const pool = getPostgresPool();
+  const result = await pool.query<EntityRow>(
+    `SELECT * FROM entities WHERE name = $1 AND type = $2 AND source = $3 LIMIT 1`,
+    [name, type, source],
+  );
+  const row = result.rows[0];
+  return row ? mapEntity(row) : null;
+}
+
+/** Finds a web3 entity of given types by on-chain address (case-insensitive). */
+export async function findWeb3EntityByAddress(
+  address: string,
+  types: string[],
+): Promise<Entity | null> {
+  const pool = getPostgresPool();
+  const result = await pool.query<EntityRow>(
+    `SELECT * FROM entities
+     WHERE source = 'web3' AND type = ANY($1::text[])
+       AND lower(address) = lower($2)
+     LIMIT 1`,
+    [types, address],
+  );
+  const row = result.rows[0];
+  return row ? mapEntity(row) : null;
+}
+
+/** Fetches entities by id (order not guaranteed; caller re-orders if needed). */
+export async function getEntitiesByIds(ids: string[]): Promise<Entity[]> {
+  if (ids.length === 0) {
+    return [];
+  }
+  const pool = getPostgresPool();
+  const result = await pool.query<EntityRow>(
+    `SELECT * FROM entities WHERE id = ANY($1::uuid[])`,
+    [ids],
+  );
+  return result.rows.map(mapEntity);
+}
+
 export async function countEntities(): Promise<number> {
   const pool = getPostgresPool();
   const result = await pool.query<{ count: string }>(
@@ -213,6 +258,11 @@ export async function deleteEntity(id: string): Promise<boolean> {
   const client: PoolClient = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query(
+      `DELETE FROM entity_relationships
+       WHERE source_entity_id = $1 OR target_entity_id = $1`,
+      [id],
+    );
     await client.query(
       `DELETE FROM entity_metrics_history WHERE entity_id = $1`,
       [id],

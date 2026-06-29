@@ -1,8 +1,10 @@
 import cors from "cors";
 import express from "express";
 import { loadConfig } from "./config.js";
+import { connectNeo4j, disconnectNeo4j } from "./db/neo4j.js";
 import { connectPostgres, disconnectPostgres } from "./db/postgres.js";
 import { connectRedis, disconnectRedis } from "./db/redis.js";
+import { reconcileNeo4j } from "./repositories/relationships.repository.js";
 import {
   startBaselineScheduler,
   stopBaselineScheduler,
@@ -17,6 +19,7 @@ import {
   stopWeb3StreamScheduler,
 } from "./queues/web3.queue.js";
 import { entitiesRouter } from "./routes/entities.js";
+import { graphRouter } from "./routes/graph.js";
 import { healthRouter } from "./routes/health.js";
 import { incidentsRouter } from "./routes/incidents.js";
 import { githubWebhookRouter } from "./routes/webhooks.github.js";
@@ -29,6 +32,15 @@ async function bootstrap(): Promise<void> {
 
   await connectRedis(config.redisUrl);
   console.log("[api] Redis connected");
+
+  if (config.neo4jUri && config.neo4jUser && config.neo4jPassword) {
+    await connectNeo4j(config.neo4jUri, config.neo4jUser, config.neo4jPassword);
+    console.log("[api] Neo4j connected");
+    await reconcileNeo4j();
+    console.log("[api] Neo4j graph reconciled");
+  } else {
+    console.warn("[api] NEO4J_* not configured, graph traversal disabled");
+  }
 
   await startNpmCollectorScheduler(config.redisUrl);
   console.log("[api] npm collector scheduler started");
@@ -61,6 +73,7 @@ async function bootstrap(): Promise<void> {
   app.use("/api", healthRouter);
   app.use("/api", entitiesRouter);
   app.use("/api", incidentsRouter);
+  app.use("/api", graphRouter);
 
   app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
     console.error("[api] unhandled error:", err);
@@ -83,6 +96,7 @@ async function bootstrap(): Promise<void> {
     await stopBaselineScheduler();
     await stopNpmCollectorScheduler();
     await stopWeb3StreamScheduler();
+    await disconnectNeo4j();
     await disconnectRedis();
     await disconnectPostgres();
     process.exit(0);

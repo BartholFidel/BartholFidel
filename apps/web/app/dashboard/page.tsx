@@ -168,6 +168,22 @@ export default async function DashboardPage(): Promise<JSX.Element> {
           </Link>
         </div>
 
+        <div className="mb-6 rounded-lg border border-surface-border bg-surface/50 px-6 py-4 text-center">
+          <p className="font-mono text-xs uppercase tracking-wide text-gray-500">
+            Relationship Graph
+          </p>
+          <p className="mt-1 text-sm text-gray-400">
+            Explore how entities connect — deployments, dependencies, and
+            cross-surface links.
+          </p>
+          <Link
+            href="/graph"
+            className="mt-3 inline-block text-sm text-accent hover:text-accent-muted"
+          >
+            Open relationship graph →
+          </Link>
+        </div>
+
         {entityCount === 0 && (
           <p className="mb-4 text-center text-sm text-gray-400">
             Add your first entity to begin monitoring.{" "}
