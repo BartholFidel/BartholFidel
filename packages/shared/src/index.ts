@@ -175,6 +175,64 @@ export interface IncidentTierCounts {
 /** PATCH /api/incidents/:id/status */
 export type IncidentStatusAction = "confirm" | "false_positive";
 
+/** Semantic relationship types between entities */
+export type RelationshipType =
+  | "DEPENDS_ON" // npm_package -> npm_package (dependent -> dependency)
+  | "DEPLOYED" // eoa_wallet -> smart_contract (deployer -> contract)
+  | "CROSS_SURFACE" // manual cross-surface link
+  | "RELATED"; // generic manual link
+
+/** Relationship edge record (Postgres entity_relationships) */
+export interface EntityRelationship {
+  id: string;
+  source_entity_id: string;
+  target_entity_id: string;
+  relationship_type: RelationshipType | string;
+  confidence: number;
+  last_confirmed_at: string;
+}
+
+/** Node in the entity relationship graph */
+export interface GraphNode {
+  id: string;
+  name: string;
+  type: string;
+  source: EntitySource;
+  risk_tier: string;
+  historically_compromised: boolean;
+}
+
+/** Edge in the entity relationship graph */
+export interface GraphEdge {
+  id: string;
+  source_entity_id: string;
+  target_entity_id: string;
+  relationship_type: RelationshipType | string;
+  confidence: number;
+}
+
+/** GET /api/graph — full graph for rendering */
+export interface EntityGraph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+/** GET /api/graph/path — shortest path between two entities */
+export interface ShortestPathResponse {
+  from: string;
+  to: string;
+  found: boolean;
+  path: Entity[]; // ordered from -> to; [] when not found
+}
+
+/** POST /api/graph/relationships request body */
+export interface CreateRelationshipBody {
+  source_entity_id: string;
+  target_entity_id: string;
+  relationship_type: RelationshipType | string;
+  confidence?: number;
+}
+
 /** Standard API success wrapper */
 export interface ApiSuccessResponse<T> {
   success: true;
